@@ -1,0 +1,20 @@
+INFO:     Started server process [113796]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+Models loaded successfully.
+INFO:     127.0.0.1:49334 - "OPTIONS /predict HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49334 - "POST /predict HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38022 - "POST /predict HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40242 - "POST /predict HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40652 - "POST /predict HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39094 - "POST /predict HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36224 - "POST /predict HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50612 - "POST /predict HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50722 - "POST /predict HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45986 - "OPTIONS /predict HTTP/1.1" 200 OK
+INFO:     127.0.0.1:45998 - "POST /predict HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [113796]
