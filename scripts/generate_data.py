@@ -11,7 +11,7 @@ np.random.seed(42)
 
 # Constants
 NUM_SUPPLIERS = 1000
-NUM_TENDERS = 2000
+NUM_TENDERS = 5000 # Increased for better learning
 START_DATE = datetime(2020, 1, 1)
 END_DATE = datetime(2025, 12, 31)
 
@@ -72,50 +72,69 @@ def generate_tenders(n):
 def generate_performance_data(suppliers_df, tenders_df):
     contracts = []
     
-    # We want to create patterns for the AI to find.
-    # Pattern 1: New small companies winning big construction tenders -> High Risk of Delay
-    # Pattern 2: Companies with low credit scores -> High Risk of Bankruptcy/Failure
+    # CAPACITY THRESHOLDS
+    CAPACITY_LIMITS = {
+        'Small': 20_000_000,
+        'Medium': 200_000_000,
+        'Large': 2_000_000_000
+    }
     
     tender_ids = tenders_df['tender_id'].tolist()
     
     for tender_id in tender_ids:
-        # Randomly assign a supplier to this tender
         supplier = suppliers_df.sample(1).iloc[0]
         tender = tenders_df[tenders_df['tender_id'] == tender_id].iloc[0]
         
         supplier_age_days = (pd.to_datetime(tender['tender_open_date']).date() - supplier['incorporation_date']).days
-        is_young_company = supplier_age_days < 365
-        is_huge_project = tender['tender_budget_kes'] > 50_000_000
-        is_low_credit = supplier['credit_score'] < 500
         
-        # --- Risk Injection Logic ---
+        limit = CAPACITY_LIMITS.get(supplier['company_size'], 20_000_000)
+        budget = tender['tender_budget_kes']
         
-        # Default outcomes
-        days_delayed = max(0, int(np.random.normal(5, 10))) # Normal delay distribution
-        cost_overrun_pct = max(0, np.random.normal(0.05, 0.05)) # Normal 5% overrun
-        delivery_quality = np.random.choice(['Good', 'Fair', 'Poor'], p=[0.7, 0.2, 0.1])
+        # --- LOGICAL BASELINE ---
+        # 1. Base delay scales with budget size (Complexity)
+        # 0 to 15 days baseline depending on budget
+        complexity_factor = min(15, (budget / 500_000_000) * 15) 
+        
+        # 2. Base delay scales with Capacity Utilization
+        # Higher utilization of firm capacity = higher risk of delay
+        utilization = budget / limit
+        utilization_delay = utilization * 10 # Adds up to 10 days for 100% capacity
+        
+        days_delayed = max(0, int(np.random.normal(complexity_factor + utilization_delay, 2)))
+        cost_overrun_pct = max(0, np.random.normal(utilization * 5, 2))
+        
+        delivery_quality = 'Good'
         contract_status = 'Completed'
         
-        # Scenario A: Young company + Huge Project = High Risk
-        if is_young_company and is_huge_project:
-            days_delayed += np.random.randint(30, 180) # Major delays
-            cost_overrun_pct += np.random.uniform(0.2, 0.5) # 20-50% overrun
-            delivery_quality = 'Poor'
-            if np.random.random() > 0.7:
-                contract_status = 'Terminated' # 30% chance of failure
+        # --- RISK INJECTION (Extreme Cases) ---
         
-        # Scenario B: Low Credit Score = Risk of Financial Issues
-        if is_low_credit:
-            days_delayed += np.random.randint(10, 60)
+        # Mismatch (Exponential Risk)
+        if budget > limit:
+            excess = budget / limit
+            days_delayed += np.random.randint(20, min(500, int(30 * excess)))
+            cost_overrun_pct += np.random.uniform(10, min(100, 15 * excess))
+            delivery_quality = 'Poor'
+            if np.random.random() < (0.1 * excess): contract_status = 'Terminated'
+
+        # Financial Health
+        if supplier['credit_score'] < 500:
+            days_delayed += np.random.randint(15, 60)
+            cost_overrun_pct += 20
+        elif supplier['credit_score'] < 650:
+            days_delayed += np.random.randint(5, 20)
+
+        # Young Company
+        if supplier_age_days < 365:
+            days_delayed += np.random.randint(10, 40)
             
         contracts.append({
             'contract_id': f"C-{tender_id}",
             'tender_id': tender_id,
             'supplier_id': supplier['supplier_id'],
-            'award_amount_kes': tender['tender_budget_kes'] * np.random.uniform(0.9, 1.1), # Bid around budget
-            'contract_start_date': tender['tender_open_date'], # Simplified
+            'award_amount_kes': budget * np.random.uniform(0.98, 1.05),
+            'contract_start_date': tender['tender_open_date'],
             'days_delayed': days_delayed,
-            'cost_overrun_percentage': round(cost_overrun_pct * 100, 2),
+            'cost_overrun_percentage': round(cost_overrun_pct, 2),
             'delivery_quality': delivery_quality,
             'contract_status': contract_status,
             'supplier_age_at_award_days': supplier_age_days

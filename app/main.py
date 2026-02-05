@@ -64,44 +64,54 @@ class PredictionResponse(BaseModel):
 @app.post("/predict", response_model=PredictionResponse)
 def predict_risk(request: PredictionRequest):
     if "classifier" not in models or "regressor" not in models:
-        # Fallback for demo if models aren't trained/loaded perfectly
+        # Fallback ONLY if models aren't loaded at all
         risk_class = "High" if request.credit_score < 500 else "Low"
         predicted_delay = 45.0 if risk_class == "High" else 5.0
         risk_prob = 0.85 if risk_class == "High" else 0.15
     else:
+        # USE THE ML MODELS
         input_data = pd.DataFrame([request.model_dump()])
         risk_class = models["classifier"].predict(input_data)[0]
         predicted_delay = models["regressor"].predict(input_data)[0]
+        
         try:
-            high_risk_index = list(models["classifier"].classes_).index("High")
-            risk_prob = models["classifier"].predict_proba(input_data)[0][high_risk_index]
+            # Get the actual probability for the "High" class
+            classes = list(models["classifier"].classes_)
+            if "High" in classes:
+                high_index = classes.index("High")
+                risk_prob = models["classifier"].predict_proba(input_data)[0][high_index]
+            else:
+                # Fallback to general confidence
+                risk_prob = np.max(models["classifier"].predict_proba(input_data)[0])
         except:
             risk_prob = 0.5
 
-    # Logic for Risk Factors
+    # --- Logic for EXPLAINABLE Risk Factors (to accompany the model prediction) ---
     factors = []
-    if request.credit_score < 500:
-        factors.append("Financial Health Critical (Credit < 500)")
-    if request.supplier_age_at_award_days < 365:
-        factors.append("Limited Operational History (< 1 year)")
-    if request.tender_budget_kes > 50_000_000 and request.company_size == "Small":
-        factors.append("Capacity Mismatch: Small Firm vs Large Project")
     
-    # AGPO Check Logic (Simulated)
-    # If a company is 'Large' but bidding on 'Access to Government Procurement Opportunities' (assumed via logic)
-    if request.company_size == "Large" and request.tender_budget_kes < 5_000_000:
-        factors.append("AGPO Violation Risk: Large firm bidding on reserved tender")
+    # Capacity Check (Logic to explain WHY the model might be flagging risk)
+    CAPACITY_LIMITS = {"Small": 20_000_000, "Medium": 200_000_000, "Large": 2_000_000_000}
+    limit = CAPACITY_LIMITS.get(request.company_size, 20_000_000)
+    if request.tender_budget_kes > limit:
+        factors.append(f"Capacity Alert: Budget exceeds typical {request.company_size} firm threshold.")
+    
+    if request.credit_score < 600:
+        factors.append(f"Financial Risk: Credit score ({request.credit_score}) is below optimal threshold.")
+    
+    if request.supplier_age_at_award_days < 365:
+        factors.append("Operational History: Firm is in its first year of operation.")
 
     if not factors:
         factors.append("No critical risk factors identified.")
 
-    # Historical Data Gen
+    # Historical Data Gen (Dynamic to match the predicted risk class)
     history = []
     current_year = datetime.now().year
-    base_delay = 20 if risk_class == "High" else 2
+    base_h_delay = 30 if risk_class == "High" else 10 if risk_class == "Medium" else 2
+    
     for i in range(1, 6):
-        sim_delay = max(0, int(np.random.normal(base_delay, 5)))
-        sim_overrun = round(max(0, np.random.normal(base_delay * 0.1, 2)), 1)
+        sim_delay = max(0, int(np.random.normal(base_h_delay, 5)))
+        sim_overrun = round(max(0, np.random.normal(base_h_delay * 0.2, 2)), 1)
         history.append({
             "year": str(current_year - i),
             "delay_days": sim_delay,
@@ -112,8 +122,8 @@ def predict_risk(request: PredictionRequest):
 
     return {
         "risk_level": risk_class,
-        "predicted_delay_days": round(predicted_delay, 1),
-        "risk_score_probability": round(risk_prob, 2),
+        "predicted_delay_days": round(float(predicted_delay), 1),
+        "risk_score_probability": round(float(risk_prob), 2),
         "risk_factors": factors,
         "historical_performance": history,
         "market_comparison": {
@@ -306,6 +316,7 @@ def verify_site(request: SiteVerifyRequest):
 
 # --- 5. GLOBAL SANCTIONS SHIELD ---
 class SanctionCheckRequest(BaseModel):
+    company_registration_number: str
     entity_name: str
     directors: list[str]
 
@@ -315,25 +326,65 @@ class SanctionCheckResponse(BaseModel):
     match_confidence: float
     details: str
 
+# Mock Sanctions Database - Using Registration Number or Person Name as Unique Keys
+SANCTION_DATABASE = {
+    # Companies (Unique ID)
+    "PVT-998877": {
+        "source_list": "World Bank Debarred List",
+        "match_confidence": 0.99,
+        "details": "Company record #WB-2023-99: Debarred for fraudulent practices in 2023. Entity linked to systematic misrepresentation of financial capacity."
+    },
+    "CR-554433": {
+        "source_list": "OFAC SDN List",
+        "match_confidence": 1.0,
+        "details": "Company record #OFAC-2024-12: Entity identified as a shell corporation involved in money laundering activities across multiple jurisdictions."
+    },
+    
+    # Directors/Individuals (Name as Key)
+    "Soyo Macharia": {
+        "source_list": "UN Security Council",
+        "match_confidence": 0.98,
+        "details": "Individual record #UN-SC-2025-IND: Subject to global asset freeze and travel ban under Resolution 2140 for suspected arms trafficking."
+    },
+    "Jane Smith": {
+        "source_list": "World Bank Debarred List",
+        "match_confidence": 0.95,
+        "details": "Individual record #WB-IND-2024: Cross-debarred for 5 years for collusion in public procurement projects."
+    }
+}
+
 @app.post("/screen-sanctions", response_model=SanctionCheckResponse)
 def screen_sanctions(request: SanctionCheckRequest):
-    # Mock Watchlist
-    WATCHLIST = ["Nexus", "DarkWeb", "Cartel", "Soyo International"] # Trigger words
+    # 1. Check Company Registration Number (Unique Identifier)
+    reg_no = request.company_registration_number.strip().upper()
+    company_match = SANCTION_DATABASE.get(reg_no)
     
-    for word in WATCHLIST:
-        if word.lower() in request.entity_name.lower():
+    if company_match:
+        return {
+            "is_sanctioned": True,
+            "source_list": company_match["source_list"],
+            "match_confidence": company_match["match_confidence"],
+            "details": f"CRITICAL COMPANY MATCH: {company_match['details']} (Context: Entity Name '{request.entity_name}' with Directors {', '.join(request.directors)})"
+        }
+    
+    # 2. Check Directors (Individual names)
+    for director in request.directors:
+        dir_name = director.strip()
+        person_match = SANCTION_DATABASE.get(dir_name)
+        if person_match:
             return {
                 "is_sanctioned": True,
-                "source_list": "World Bank Debarred List",
-                "match_confidence": 0.98,
-                "details": f"Entity '{request.entity_name}' matches record #WB-2023-99: Debarred for fraudulent practices in 2023."
+                "source_list": person_match["source_list"],
+                "match_confidence": person_match["match_confidence"],
+                "details": f"CRITICAL DIRECTOR MATCH: {person_match['details']} (Director: {dir_name} found in board of '{request.entity_name}', Reg: {reg_no})"
             }
             
+    # 3. Clearance
     return {
         "is_sanctioned": False,
         "source_list": None,
         "match_confidence": 0.0,
-        "details": "Clear. No matches found in OFAC, UN, or World Bank databases."
+        "details": f"Clear. No matches found for Registration Number '{reg_no}' or specified directors in OFAC, UN, or World Bank databases. Screening context for '{request.entity_name}' is verified as low risk."
     }
 
 if __name__ == "__main__":
