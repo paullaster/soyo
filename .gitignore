@@ -1,2 +1,5 @@
-*.csv
-.venv/
+venv/
+data/
+models/
+server.log
+training.log
